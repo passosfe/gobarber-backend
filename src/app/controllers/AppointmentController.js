@@ -1,16 +1,22 @@
 import Appointment from '../models/Appointments';
+import Notification from '../schemas/Notification';
 import User from '../models/User';
 import * as Yup from 'yup';
-import { startOfHour, parseISO, isBefore } from 'date-fns';
+import { startOfHour, parseISO, isBefore, format } from 'date-fns';
+import pt from 'date-fns/locale/pt';
 
 class AppointmentController {
   async index(req, res) {
+    const { page = 1 } = req.query;
+
     const appointments = Appointment.findAll({
       where: {
         user_id: req.userId,
         canceled_at: null,
       },
       order: ['date'],
+      limit: 20,
+      offset: (page - 1) * 20,
       include: [
         {
           model: User,
@@ -26,6 +32,8 @@ class AppointmentController {
         },
       ],
     });
+
+    return res.json(appointments);
   }
 
   async store(req, res) {
@@ -39,6 +47,12 @@ class AppointmentController {
     }
 
     const { provider_id, date } = req.body;
+
+    if (req.userId === provider_id) {
+      return res
+        .status(400)
+        .json({ error: 'You cant book an appointment with yourself' });
+    }
 
     const isProvider = User.findOne({
       where: { id: provider_id, provider: true },
@@ -56,10 +70,10 @@ class AppointmentController {
       return res.status(400).json({ error: 'Past dates are not allowed' });
     }
 
-    const checkAvailability = Appointment.findOne({
+    const checkAvailability = await Appointment.findOne({
       where: {
         date: hourStart,
-        providerId,
+        provider_id,
         canceled_at: null,
       },
     });
@@ -70,7 +84,18 @@ class AppointmentController {
         .json({ error: 'Appointment date is not available' });
     }
 
-    const appointment = Appointment.create({
+    const user = await User.findByPk(req.userId);
+
+    const formattedDate = format(hourStart, "dd' de 'MMMM', às 'H:mm'h'", {
+      locale: pt,
+    });
+
+    await Notification.create({
+      content: `Novo agendamento de ${user.name} para dia ${formattedDate}`,
+      user: provider_id,
+    });
+
+    const appointment = await Appointment.create({
       user_id: req.userId,
       provider_id,
       date: hourStart,
